@@ -103,7 +103,10 @@ func (t *Tracker) TrackPacket(pkt gopacket.Packet) {
 	if ts.IsZero() {
 		ts = time.Now()
 	}
-	payloadLen := len(pkt.TransportLayer().LayerPayload())
+	var payloadLen int
+	if tl := pkt.TransportLayer(); tl != nil {
+		payloadLen = len(tl.LayerPayload())
+	}
 
 	// Build canonical flow key — always store with lower IP:port first
 	// so both directions map to the same session.
