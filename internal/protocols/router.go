@@ -1,0 +1,203 @@
+// Package protocols implements the AkesoNDR protocol router.
+//
+// The router classifies network sessions by port number and payload heuristics,
+// then dispatches to the correct protocol dissector. It implements the
+// capture.StreamHandler interface to receive reassembled TCP streams from the
+// TCP reassembly engine, and also provides a method for processing individual
+// UDP packets (e.g., DNS).
+package protocols
+
+import (
+	"encoding/binary"
+	"sync"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+
+	ndrdns "github.com/akesondr/akeso-ndr/internal/protocols/dns"
+	ndrhttp "github.com/akesondr/akeso-ndr/internal/protocols/http"
+)
+
+// MetadataCallback is called when a protocol dissector produces metadata.
+type MetadataCallback func(meta any, protocol string, net, transport gopacket.Flow)
+
+// Router classifies and dispatches to protocol dissectors.
+type Router struct {
+	mu       sync.RWMutex
+	dns      *ndrdns.Parser
+	http     *ndrhttp.Parser
+	callback MetadataCallback
+
+	// Stats
+	stats RouterStats
+}
+
+// RouterStats tracks protocol classification counts.
+type RouterStats struct {
+	DNS     uint64 `json:"dns"`
+	HTTP    uint64 `json:"http"`
+	TLS     uint64 `json:"tls"`
+	Unknown uint64 `json:"unknown"`
+}
+
+// NewRouter creates a protocol router with all available dissectors.
+func NewRouter(callback MetadataCallback) *Router {
+	return &Router{
+		dns:      ndrdns.NewParser(),
+		http:     ndrhttp.NewParser(),
+		callback: callback,
+	}
+}
+
+// HandleStream implements capture.StreamHandler. It receives reassembled
+// bidirectional TCP stream data and routes to the appropriate dissector.
+func (r *Router) HandleStream(net, transport gopacket.Flow, client, server []byte) {
+	dstPort := dstPortFromFlow(transport)
+
+	protocol := r.classifyTCP(dstPort, client, server)
+
+	switch protocol {
+	case "http":
+		meta := r.http.Parse(client, server)
+		if meta != nil {
+			r.mu.Lock()
+			r.stats.HTTP++
+			r.mu.Unlock()
+			if r.callback != nil {
+				r.callback(meta, "http", net, transport)
+			}
+			return
+		}
+
+	case "tls":
+		// TLS dissector will be added in a future phase.
+		r.mu.Lock()
+		r.stats.TLS++
+		r.mu.Unlock()
+		if r.callback != nil {
+			r.callback(nil, "tls", net, transport)
+		}
+		return
+	}
+
+	// Unknown/unhandled protocol.
+	r.mu.Lock()
+	r.stats.Unknown++
+	r.mu.Unlock()
+}
+
+// HandlePacket processes a single packet for non-TCP protocols (primarily DNS
+// over UDP). Called directly by the capture pipeline for each UDP packet.
+func (r *Router) HandlePacket(pkt gopacket.Packet) {
+	// Check for DNS (UDP port 53 or DNS layer present).
+	if r.dns.CanParse(pkt) {
+		meta := r.dns.Parse(pkt)
+		if meta != nil {
+			r.mu.Lock()
+			r.stats.DNS++
+			r.mu.Unlock()
+			if r.callback != nil {
+				var netFlow, transFlow gopacket.Flow
+				if nl := pkt.NetworkLayer(); nl != nil {
+					netFlow = nl.NetworkFlow()
+				}
+				if tl := pkt.TransportLayer(); tl != nil {
+					transFlow = tl.TransportFlow()
+				}
+				r.callback(meta, "dns", netFlow, transFlow)
+			}
+		}
+		return
+	}
+
+	// Future: ICMP, other UDP protocols.
+	r.mu.Lock()
+	r.stats.Unknown++
+	r.mu.Unlock()
+}
+
+// Stats returns a snapshot of protocol classification counts.
+func (r *Router) Stats() RouterStats {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.stats
+}
+
+// ---------------------------------------------------------------------------
+// Classification logic
+// ---------------------------------------------------------------------------
+
+// classifyTCP determines the application protocol for a TCP stream using
+// port-based hints and payload heuristics.
+func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
+	// 1. Payload heuristics (most reliable).
+	if len(client) > 0 {
+		// TLS: ClientHello starts with 0x16 0x03 (handshake + TLS version).
+		if isTLSClientHello(client) {
+			return "tls"
+		}
+
+		// HTTP: starts with a method keyword.
+		if r.http.CanParse(client) {
+			return "http"
+		}
+	}
+
+	// 2. Port-based fallback.
+	switch dstPort {
+	case 80, 8080, 8000, 8888:
+		return "http"
+	case 443, 8443:
+		return "tls"
+	}
+
+	return "unknown"
+}
+
+// isTLSClientHello checks if data starts with a TLS handshake record
+// (content type 0x16 = Handshake, version 0x0301-0x0304).
+func isTLSClientHello(data []byte) bool {
+	if len(data) < 6 {
+		return false
+	}
+	// TLS record: type(1) + version(2) + length(2) + handshake_type(1)
+	if data[0] != 0x16 { // Handshake
+		return false
+	}
+	// Version: 0x0301 (TLS 1.0) through 0x0304 (TLS 1.3), or 0x0300 (SSL 3.0)
+	version := binary.BigEndian.Uint16(data[1:3])
+	if version < 0x0300 || version > 0x0304 {
+		return false
+	}
+	// Handshake type 1 = ClientHello
+	if data[5] == 0x01 {
+		return true
+	}
+	return false
+}
+
+// dstPortFromFlow extracts the destination port from a transport flow.
+func dstPortFromFlow(transport gopacket.Flow) uint16 {
+	dst := transport.Dst()
+	raw := dst.Raw()
+	if len(raw) == 2 {
+		return binary.BigEndian.Uint16(raw)
+	}
+	return 0
+}
+
+// classifyPacketProtocol returns the protocol name for a single packet
+// based on port numbers. Used for UDP classification.
+func classifyPacketProtocol(pkt gopacket.Packet) string {
+	if tl := pkt.TransportLayer(); tl != nil {
+		switch tp := tl.(type) {
+		case *layers.UDP:
+			srcPort := uint16(tp.SrcPort)
+			dstPort := uint16(tp.DstPort)
+			if srcPort == 53 || dstPort == 53 {
+				return "dns"
+			}
+		}
+	}
+	return "unknown"
+}
