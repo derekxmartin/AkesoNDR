@@ -17,6 +17,8 @@ import (
 	ndrdns "github.com/akesondr/akeso-ndr/internal/protocols/dns"
 	ndrhttp "github.com/akesondr/akeso-ndr/internal/protocols/http"
 	ndrkrb "github.com/akesondr/akeso-ndr/internal/protocols/kerberos"
+	ndrdcerpc "github.com/akesondr/akeso-ndr/internal/protocols/dcerpc"
+	ndrldap "github.com/akesondr/akeso-ndr/internal/protocols/ldap"
 	ndrntlm "github.com/akesondr/akeso-ndr/internal/protocols/ntlm"
 	ndrrdp "github.com/akesondr/akeso-ndr/internal/protocols/rdp"
 	ndrsmb "github.com/akesondr/akeso-ndr/internal/protocols/smb"
@@ -40,6 +42,8 @@ type Router struct {
 	smtp     *ndrsmtp.Parser
 	rdp      *ndrrdp.Parser
 	ntlm     *ndrntlm.Parser
+	ldap     *ndrldap.Parser
+	dcerpc   *ndrdcerpc.Parser
 	callback MetadataCallback
 
 	// Stats
@@ -57,6 +61,8 @@ type RouterStats struct {
 	SMTP     uint64 `json:"smtp"`
 	RDP      uint64 `json:"rdp"`
 	NTLM     uint64 `json:"ntlm"`
+	LDAP     uint64 `json:"ldap"`
+	DCERPC   uint64 `json:"dcerpc"`
 	Unknown  uint64 `json:"unknown"`
 }
 
@@ -72,6 +78,8 @@ func NewRouter(callback MetadataCallback) *Router {
 		smtp:     ndrsmtp.NewParser(),
 		rdp:      ndrrdp.NewParser(),
 		ntlm:     ndrntlm.NewParser(),
+		ldap:     ndrldap.NewParser(),
+		dcerpc:   ndrdcerpc.NewParser(),
 		callback: callback,
 	}
 }
@@ -148,6 +156,26 @@ func (r *Router) HandleStream(net, transport gopacket.Flow, client, server []byt
 			r.incStat(&r.stats.RDP)
 			if r.callback != nil {
 				r.callback(meta, "rdp", net, transport)
+			}
+			return
+		}
+
+	case "ldap":
+		meta := r.ldap.Parse(client, server)
+		if meta != nil {
+			r.incStat(&r.stats.LDAP)
+			if r.callback != nil {
+				r.callback(meta, "ldap", net, transport)
+			}
+			return
+		}
+
+	case "dcerpc":
+		meta := r.dcerpc.Parse(client, server)
+		if meta != nil {
+			r.incStat(&r.stats.DCERPC)
+			if r.callback != nil {
+				r.callback(meta, "dcerpc", net, transport)
 			}
 			return
 		}
@@ -275,6 +303,16 @@ func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
 		if r.rdp.CanParse(client) {
 			return "rdp"
 		}
+
+		// LDAP: ASN.1 SEQUENCE + INTEGER + APPLICATION tag.
+		if r.ldap.CanParse(client) {
+			return "ldap"
+		}
+
+		// DCE-RPC: version 5.0 header.
+		if r.dcerpc.CanParse(client) {
+			return "dcerpc"
+		}
 	}
 
 	// Also check server data for protocols where server responds first.
@@ -287,6 +325,12 @@ func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
 		}
 		if r.ssh.CanParse(server) {
 			return "ssh"
+		}
+		if r.ldap.CanParse(server) {
+			return "ldap"
+		}
+		if r.dcerpc.CanParse(server) {
+			return "dcerpc"
 		}
 	}
 
@@ -306,6 +350,10 @@ func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
 		return "smtp"
 	case 3389:
 		return "rdp"
+	case 389, 3268:
+		return "ldap"
+	case 135:
+		return "dcerpc"
 	}
 
 	return "unknown"
