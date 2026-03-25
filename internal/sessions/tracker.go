@@ -265,11 +265,12 @@ func (t *Tracker) createSession(key string, flow common.FlowKey,
 
 	sess := &session{
 		meta: common.SessionMeta{
-			ID:        fmt.Sprintf("%s-%d", key, ts.UnixNano()),
-			Flow:      flow,
-			Transport: transport,
-			StartTime: ts,
-			ConnState: common.ConnStateS0,
+			ID:          fmt.Sprintf("%s-%d", key, ts.UnixNano()),
+			CommunityID: CommunityIDFromFlow(srcIP, dstIP, srcPort, dstPort, proto),
+			Flow:        flow,
+			Transport:   transport,
+			StartTime:   ts,
+			ConnState:   common.ConnStateS0,
 		},
 		lastSeen: ts,
 	}
