@@ -1,0 +1,77 @@
+# =============================================================================
+# AkesoNDR Configuration
+# =============================================================================
+
+# --- Packet Capture ---
+[capture]
+interface    = "eth0"           # Network interface (SPAN/TAP port)
+bpf_filter   = ""               # BPF filter expression (empty = capture all)
+snap_len     = 65535            # Max bytes per packet
+promiscuous  = true             # Promiscuous mode
+buffer_size_mb = 64             # Kernel ring buffer size (MB)
+
+# --- Connection Tracking ---
+[sessions]
+tcp_timeout       = "5m"        # Idle timeout for TCP sessions
+udp_timeout       = "2m"        # Idle timeout for UDP sessions
+max_concurrent    = 100000      # Max tracked concurrent sessions
+cleanup_interval  = "30s"       # How often to sweep expired sessions
+
+# --- Detection Engine ---
+[detection.beacon]
+min_sessions    = 10            # Minimum sessions before scoring
+max_jitter_ratio = 0.2          # Max coefficient of variation (0.0–1.0)
+min_duration    = "2h"          # Minimum observation window
+
+[detection.dns_tunnel]
+entropy_threshold      = 3.5    # Shannon entropy threshold for query names
+max_subdomain_depth    = 5      # Subdomain levels before flagging
+query_volume_threshold = 100    # Queries per parent domain per window
+
+[detection.lateral_movement]
+fan_out_threshold = 5           # New internal hosts contacted in window
+time_window       = "15m"
+
+[detection.exfiltration]
+baseline_window       = "1h"    # Rolling baseline period
+deviation_threshold   = 3.0     # Standard deviations above baseline
+absolute_threshold_mb = 500     # Hard cap (MB) regardless of baseline
+
+[detection.kerberos]
+tgs_request_threshold = 10      # TGS requests from one host in window
+time_window           = "5m"
+
+[detection.scan]
+port_threshold = 50             # Unique ports to one host = vertical scan
+host_threshold = 25             # Unique hosts on one port = horizontal scan
+time_window    = "5m"
+
+# --- Suricata Signatures ---
+[signatures]
+enabled   = false
+rule_dirs = ["/etc/akeso-ndr/rules"]
+
+# --- SIEM Export ---
+[export]
+siem_endpoint  = "http://localhost:9200/api/v1/ingest"
+api_key        = ""             # AkesoSIEM API key (X-API-Key header)
+batch_size     = 500            # Events per batch
+flush_interval = "5s"           # Max time before flushing a partial batch
+max_retries    = 3              # Retry count on transient failures
+
+# --- REST API ---
+[api]
+listen_addr      = ":8080"      # Bind address for the API server
+enable_dashboard = true         # Serve the web dashboard
+
+# --- PCAP Evidence Buffer ---
+[pcap_buffer]
+max_size_mb      = 1024         # Rolling buffer max size on disk
+retention        = "30m"        # Max age before eviction
+storage_path     = "/var/lib/akeso-ndr/pcap"
+max_flow_packets = 50           # Packets retained per flow
+
+# --- Logging ---
+[logging]
+level  = "info"                 # debug, info, warn, error
+format = "json"                 # json or console
