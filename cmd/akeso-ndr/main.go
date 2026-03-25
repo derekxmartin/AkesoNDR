@@ -91,7 +91,27 @@ func main() {
 					hm.UserAgent)
 			}
 		case "tls":
-			log.Printf("[tls] %s → %s | TLS session detected", net.Src(), net.Dst())
+			if tm, ok := meta.(*common.TLSMeta); ok && tm != nil {
+				log.Printf("[tls] %s → %s | %s sni=%s cipher=%s ja3=%s",
+					net.Src(), net.Dst(), tm.Version, tm.ServerName, tm.Cipher, tm.JA3)
+			} else {
+				log.Printf("[tls] %s → %s | TLS session detected", net.Src(), net.Dst())
+			}
+		case "smb":
+			if sm, ok := meta.(*common.SMBMeta); ok {
+				log.Printf("[smb] %s → %s | %s action=%s path=%s user=%s",
+					net.Src(), net.Dst(), sm.Version, sm.Action, sm.Path, sm.Username)
+			}
+		case "kerberos":
+			if km, ok := meta.(*common.KerberosMeta); ok {
+				if km.Success {
+					log.Printf("[kerberos] %s → %s | %s client=%s service=%s cipher=%d",
+						net.Src(), net.Dst(), km.RequestType, km.Client, km.Service, km.RepCipher)
+				} else {
+					log.Printf("[kerberos] %s → %s | %s client=%s error=%s",
+						net.Src(), net.Dst(), km.RequestType, km.Client, km.ErrorMsg)
+				}
+			}
 		}
 	})
 
@@ -150,8 +170,8 @@ func main() {
 	created, closed := tracker.Stats()
 	log.Printf("[sensor] Capture finished: packets=%d bytes=%d dropped=%d",
 		m.PacketsReceived, m.BytesReceived, m.PacketsDropped)
-	log.Printf("[sensor] Protocols: dns=%d http=%d tls=%d unknown=%d",
-		stats.DNS, stats.HTTP, stats.TLS, stats.Unknown)
+	log.Printf("[sensor] Protocols: dns=%d http=%d tls=%d smb=%d kerberos=%d unknown=%d",
+		stats.DNS, stats.HTTP, stats.TLS, stats.SMB, stats.Kerberos, stats.Unknown)
 	log.Printf("[sensor] Sessions: created=%d closed=%d active=%d",
 		created, closed, tracker.ActiveSessions())
 }
