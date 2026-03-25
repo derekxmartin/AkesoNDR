@@ -115,7 +115,9 @@ func main() {
 	}
 
 	// --- Main packet loop: feed packets through tracker + router ---
+	pipelineDone := make(chan struct{})
 	go func() {
+		defer close(pipelineDone)
 		count := uint64(0)
 		for pkt := range engine.Packets() {
 			count++
@@ -132,16 +134,6 @@ func main() {
 					m.PacketsReceived, m.PPS(), m.BPS())
 			}
 		}
-
-		m := engine.GetMetrics()
-		stats := router.Stats()
-		created, closed := tracker.Stats()
-		log.Printf("[sensor] Capture finished: packets=%d bytes=%d dropped=%d",
-			m.PacketsReceived, m.BytesReceived, m.PacketsDropped)
-		log.Printf("[sensor] Protocols: dns=%d http=%d tls=%d unknown=%d",
-			stats.DNS, stats.HTTP, stats.TLS, stats.Unknown)
-		log.Printf("[sensor] Sessions: created=%d closed=%d active=%d",
-			created, closed, tracker.ActiveSessions())
 	}()
 
 	log.Println("[sensor] AkesoNDR sensor started. Waiting for shutdown signal...")
@@ -149,7 +141,19 @@ func main() {
 
 	log.Println("[sensor] Shutting down...")
 	engine.Stop()
+	<-pipelineDone // Wait for packet loop to drain.
 	tracker.Stop()
+
+	// Print summary.
+	m := engine.GetMetrics()
+	stats := router.Stats()
+	created, closed := tracker.Stats()
+	log.Printf("[sensor] Capture finished: packets=%d bytes=%d dropped=%d",
+		m.PacketsReceived, m.BytesReceived, m.PacketsDropped)
+	log.Printf("[sensor] Protocols: dns=%d http=%d tls=%d unknown=%d",
+		stats.DNS, stats.HTTP, stats.TLS, stats.Unknown)
+	log.Printf("[sensor] Sessions: created=%d closed=%d active=%d",
+		created, closed, tracker.ActiveSessions())
 }
 
 func waitForShutdown() {
