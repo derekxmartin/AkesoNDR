@@ -1,0 +1,55 @@
+title: Full Kill Chain - Recon to Credential Theft to Lateral Movement to Exfiltration
+id: a1b2c3d4-5555-4000-8000-000000000005
+status: experimental
+description: |
+  Full attack chain correlation across NDR and EDR:
+  1. NDR detects port scanning (reconnaissance)
+  2. EDR detects credential dumping (credential access)
+  3. NDR detects lateral movement via SMB (lateral movement)
+  4. NDR detects data exfiltration (exfiltration)
+  All correlated by host IP and within a 4-hour timeframe.
+  This represents a complete compromise lifecycle.
+references:
+  - https://attack.mitre.org/techniques/T1046/
+  - https://attack.mitre.org/techniques/T1003/
+  - https://attack.mitre.org/techniques/T1021/
+  - https://attack.mitre.org/techniques/T1041/
+author: AkesoNDR
+date: 2026/03/25
+tags:
+  - attack.reconnaissance
+  - attack.credential_access
+  - attack.lateral_movement
+  - attack.exfiltration
+  - attack.t1046
+  - attack.t1003
+  - attack.t1021
+  - attack.t1041
+logsource:
+  product: akeso_ndr
+  category: correlation
+detection:
+  recon:
+    source_type: akeso_ndr
+    event.dataset: 'ndr:detection'
+    ndr.detection.name: port_scan
+  credential_theft:
+    source_type: akeso_edr
+    event.action: process_access
+    process.target.name|endswith: lsass.exe
+  lateral_move:
+    source_type: akeso_ndr
+    event.dataset: 'ndr:detection'
+    ndr.detection.name|contains: lateral_movement
+    source.ip: '%recon.source.ip%'
+  exfiltration:
+    source_type: akeso_ndr
+    event.dataset: 'ndr:detection'
+    ndr.detection.name: data_exfiltration
+    source.ip: '%recon.source.ip%'
+  timeframe: 4h
+  condition: recon | credential_theft | lateral_move | exfiltration
+level: critical
+falsepositives:
+  - Legitimate penetration testing activities
+  - Red team exercises (should be whitelisted by source IP)

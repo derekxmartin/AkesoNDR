@@ -1,0 +1,38 @@
+title: NDR + DLP - Data Exfiltration Confirmation
+id: a1b2c3d4-4444-4000-8000-000000000004
+status: experimental
+description: |
+  NDR detects high-volume outbound transfer from a host, correlated with
+  DLP classification showing the accessed files were confidential. Confirms
+  data exfiltration of sensitive material and provides both the network
+  evidence (volume, destination) and data classification context.
+references:
+  - https://attack.mitre.org/techniques/T1041/
+  - https://attack.mitre.org/techniques/T1048/
+author: AkesoNDR
+date: 2026/03/25
+tags:
+  - attack.exfiltration
+  - attack.t1041
+  - attack.t1048
+logsource:
+  product: akeso_ndr
+  category: correlation
+detection:
+  exfil_detected:
+    source_type: akeso_ndr
+    event.dataset: 'ndr:detection'
+    ndr.detection.name: data_exfiltration
+  dlp_classified:
+    source_type: akeso_dlp
+    event.category: file
+    file.classification|contains:
+      - confidential
+      - restricted
+      - sensitive
+    host.ip: '%exfil_detected.source.ip%'
+  timeframe: 1h
+  condition: exfil_detected | dlp_classified
+level: critical
+falsepositives:
+  - Large legitimate uploads (cloud backups) of classified data
