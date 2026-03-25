@@ -112,6 +112,26 @@ func main() {
 						net.Src(), net.Dst(), km.RequestType, km.Client, km.ErrorMsg)
 				}
 			}
+		case "ssh":
+			if sm, ok := meta.(*common.SSHMeta); ok {
+				log.Printf("[ssh] %s → %s | v%d client=%s server=%s hassh=%s",
+					net.Src(), net.Dst(), sm.Version, sm.Client, sm.Server, sm.HASSH)
+			}
+		case "smtp":
+			if sm, ok := meta.(*common.SMTPMeta); ok {
+				log.Printf("[smtp] %s → %s | from=%s to=%v subject=%s tls=%v",
+					net.Src(), net.Dst(), sm.From, sm.To, sm.Subject, sm.TLS)
+			}
+		case "rdp":
+			if rm, ok := meta.(*common.RDPMeta); ok {
+				log.Printf("[rdp] %s → %s | user=%s client=%s protocols=%s",
+					net.Src(), net.Dst(), rm.Cookie, rm.ClientName, rm.ClientBuild)
+			}
+		case "ntlm":
+			if nm, ok := meta.(*common.NTLMMeta); ok {
+				log.Printf("[ntlm] %s → %s | domain=%s user=%s host=%s success=%v",
+					net.Src(), net.Dst(), nm.Domain, nm.Username, nm.Hostname, nm.Success)
+			}
 		}
 	})
 
@@ -170,8 +190,9 @@ func main() {
 	created, closed := tracker.Stats()
 	log.Printf("[sensor] Capture finished: packets=%d bytes=%d dropped=%d",
 		m.PacketsReceived, m.BytesReceived, m.PacketsDropped)
-	log.Printf("[sensor] Protocols: dns=%d http=%d tls=%d smb=%d kerberos=%d unknown=%d",
-		stats.DNS, stats.HTTP, stats.TLS, stats.SMB, stats.Kerberos, stats.Unknown)
+	log.Printf("[sensor] Protocols: dns=%d http=%d tls=%d smb=%d krb=%d ssh=%d smtp=%d rdp=%d ntlm=%d unk=%d",
+		stats.DNS, stats.HTTP, stats.TLS, stats.SMB, stats.Kerberos,
+		stats.SSH, stats.SMTP, stats.RDP, stats.NTLM, stats.Unknown)
 	log.Printf("[sensor] Sessions: created=%d closed=%d active=%d",
 		created, closed, tracker.ActiveSessions())
 }
