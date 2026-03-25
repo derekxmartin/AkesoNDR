@@ -306,3 +306,188 @@ func TestExfilDetectorNormalTraffic(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Kerberos attack detector tests (P5-T6)
+// ---------------------------------------------------------------------------
+
+func TestKerberoastingDetection(t *testing.T) {
+	cfg := config.KerberosConfig{TGSRequestThreshold: 10}
+	d := NewKerberosAttackDetector(cfg)
+
+	// 15 TGS-REQ with RC4 (etype 23) from same source → Kerberoasting.
+	for i := 0; i < 15; i++ {
+		d.ProcessProtocol(&common.KerberosMeta{
+			RequestType: "TGS",
+			Client:      "attacker@CORP.LOCAL",
+			Service:     fmt.Sprintf("MSSQLSvc/db%d.corp.local", i),
+			ReqCiphers:  []int{23, 17, 18},
+		}, "kerberos")
+	}
+
+	alerts := d.Check()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 Kerberoasting alert, got %d", len(alerts))
+	}
+	if alerts[0].Type != common.DetectionKerberoasting {
+		t.Errorf("type = %s, want kerberoasting", alerts[0].Type)
+	}
+	if alerts[0].MITRE.TechniqueID != "T1558.003" {
+		t.Errorf("MITRE = %s, want T1558.003", alerts[0].MITRE.TechniqueID)
+	}
+	rc4Count, _ := alerts[0].Evidence["tgs_rc4_count"].(int)
+	if rc4Count != 15 {
+		t.Errorf("tgs_rc4_count = %d, want 15", rc4Count)
+	}
+}
+
+func TestKerberoastingBelowThreshold(t *testing.T) {
+	cfg := config.KerberosConfig{TGSRequestThreshold: 20}
+	d := NewKerberosAttackDetector(cfg)
+
+	// Only 5 TGS-REQ — below threshold.
+	for i := 0; i < 5; i++ {
+		d.ProcessProtocol(&common.KerberosMeta{
+			RequestType: "TGS",
+			Client:      "user@CORP.LOCAL",
+			ReqCiphers:  []int{23},
+		}, "kerberos")
+	}
+
+	alerts := d.Check()
+	if len(alerts) != 0 {
+		t.Errorf("expected 0 alerts below threshold, got %d", len(alerts))
+	}
+}
+
+func TestASREPRoasting(t *testing.T) {
+	cfg := config.KerberosConfig{TGSRequestThreshold: 100}
+	d := NewKerberosAttackDetector(cfg)
+
+	// 5 AS-REP with RC4 reply cipher from same source → AS-REP roasting.
+	for i := 0; i < 5; i++ {
+		d.ProcessProtocol(&common.KerberosMeta{
+			RequestType: "AS",
+			Client:      "attacker@CORP.LOCAL",
+			Service:     fmt.Sprintf("svc%d@CORP.LOCAL", i),
+			Success:     true,
+			RepCipher:   23, // RC4
+		}, "kerberos")
+	}
+
+	alerts := d.Check()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 AS-REP roast alert, got %d", len(alerts))
+	}
+	if alerts[0].Type != common.DetectionASREPRoast {
+		t.Errorf("type = %s, want asrep_roast", alerts[0].Type)
+	}
+}
+
+func TestKerberosBruteForce(t *testing.T) {
+	cfg := config.KerberosConfig{TGSRequestThreshold: 100}
+	d := NewKerberosAttackDetector(cfg)
+
+	// 15 PREAUTH_FAILED errors.
+	for i := 0; i < 15; i++ {
+		d.ProcessProtocol(&common.KerberosMeta{
+			RequestType: "AS",
+			Client:      "admin@CORP.LOCAL",
+			ErrorCode:   24, // KDC_ERR_PREAUTH_FAILED
+			ErrorMsg:    "KDC_ERR_PREAUTH_FAILED",
+		}, "kerberos")
+	}
+
+	alerts := d.Check()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 brute force alert, got %d", len(alerts))
+	}
+	fails, _ := alerts[0].Evidence["preauth_fails"].(int)
+	if fails != 15 {
+		t.Errorf("preauth_fails = %d, want 15", fails)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Port scan detector tests (P5-T7)
+// ---------------------------------------------------------------------------
+
+func TestHorizontalScan(t *testing.T) {
+	cfg := config.ScanConfig{HostThreshold: 5, PortThreshold: 50}
+	d := NewPortScanDetector(cfg)
+
+	// SYN scan: one source, many destinations, same port (445), all S0.
+	for i := 0; i < 10; i++ {
+		d.ProcessSession(&common.SessionMeta{
+			Flow: common.FlowKey{
+				SrcIP:   net.ParseIP("10.0.0.99"),
+				DstIP:   net.ParseIP(fmt.Sprintf("10.0.1.%d", i)),
+				DstPort: 445,
+			},
+			Transport: common.TransportTCP,
+			ConnState: common.ConnStateS0,
+		})
+	}
+
+	alerts := d.Check()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 scan alert, got %d", len(alerts))
+	}
+	if alerts[0].Type != common.DetectionPortScan {
+		t.Errorf("type = %s", alerts[0].Type)
+	}
+	scanType, _ := alerts[0].Evidence["scan_type"].(string)
+	if scanType != "horizontal" {
+		t.Errorf("scan_type = %q, want horizontal", scanType)
+	}
+}
+
+func TestVerticalScan(t *testing.T) {
+	cfg := config.ScanConfig{HostThreshold: 100, PortThreshold: 10}
+	d := NewPortScanDetector(cfg)
+
+	// Vertical scan: one source, one destination, many ports.
+	for port := uint16(1); port <= 50; port++ {
+		d.ProcessSession(&common.SessionMeta{
+			Flow: common.FlowKey{
+				SrcIP:   net.ParseIP("10.0.0.88"),
+				DstIP:   net.ParseIP("10.0.0.1"),
+				DstPort: port,
+			},
+			Transport: common.TransportTCP,
+			ConnState: common.ConnStateS0,
+		})
+	}
+
+	alerts := d.Check()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 scan alert, got %d", len(alerts))
+	}
+	scanType, _ := alerts[0].Evidence["scan_type"].(string)
+	if scanType != "vertical" {
+		t.Errorf("scan_type = %q, want vertical", scanType)
+	}
+}
+
+func TestNoScanBelowThreshold(t *testing.T) {
+	cfg := config.ScanConfig{HostThreshold: 25, PortThreshold: 50}
+	d := NewPortScanDetector(cfg)
+
+	// Only 3 connections — below any threshold.
+	for i := 0; i < 3; i++ {
+		d.ProcessSession(&common.SessionMeta{
+			Flow: common.FlowKey{
+				SrcIP:   net.ParseIP("10.0.0.5"),
+				DstIP:   net.ParseIP(fmt.Sprintf("10.0.0.%d", 10+i)),
+				DstPort: 80,
+			},
+			Transport: common.TransportTCP,
+			ConnState: common.ConnStateS1,
+		})
+	}
+
+	alerts := d.Check()
+	if len(alerts) != 0 {
+		t.Errorf("expected 0 alerts, got %d", len(alerts))
+	}
+}
