@@ -32,10 +32,10 @@ type CaptureConfig struct {
 
 // SessionsConfig controls connection tracking.
 type SessionsConfig struct {
-	TCPTimeout     duration `toml:"tcp_timeout"`
-	UDPTimeout     duration `toml:"udp_timeout"`
+	TCPTimeout     Duration `toml:"tcp_timeout"`
+	UDPTimeout     Duration `toml:"udp_timeout"`
 	MaxConcurrent  int      `toml:"max_concurrent"`
-	CleanupInterval duration `toml:"cleanup_interval"`
+	CleanupInterval Duration `toml:"cleanup_interval"`
 }
 
 // DetectionConfig holds thresholds for each behavioral detector.
@@ -52,7 +52,7 @@ type DetectionConfig struct {
 type BeaconConfig struct {
 	MinSessions    int      `toml:"min_sessions"`
 	MaxJitterRatio float64  `toml:"max_jitter_ratio"`
-	MinDuration    duration `toml:"min_duration"`
+	MinDuration    Duration `toml:"min_duration"`
 }
 
 // DNSTunnelConfig holds DNS tunneling detection thresholds.
@@ -65,12 +65,12 @@ type DNSTunnelConfig struct {
 // LateralMoveConfig holds lateral movement detection thresholds.
 type LateralMoveConfig struct {
 	FanOutThreshold  int      `toml:"fan_out_threshold"`
-	TimeWindow       duration `toml:"time_window"`
+	TimeWindow       Duration `toml:"time_window"`
 }
 
 // ExfilConfig holds data exfiltration detection thresholds.
 type ExfilConfig struct {
-	BaselineWindow      duration `toml:"baseline_window"`
+	BaselineWindow      Duration `toml:"baseline_window"`
 	DeviationThreshold  float64  `toml:"deviation_threshold"`
 	AbsoluteThresholdMB int      `toml:"absolute_threshold_mb"`
 }
@@ -78,14 +78,14 @@ type ExfilConfig struct {
 // KerberosConfig holds Kerberos attack detection thresholds.
 type KerberosConfig struct {
 	TGSRequestThreshold int      `toml:"tgs_request_threshold"`
-	TimeWindow          duration `toml:"time_window"`
+	TimeWindow          Duration `toml:"time_window"`
 }
 
 // ScanConfig holds port scan detection thresholds.
 type ScanConfig struct {
 	PortThreshold int      `toml:"port_threshold"`
 	HostThreshold int      `toml:"host_threshold"`
-	TimeWindow    duration `toml:"time_window"`
+	TimeWindow    Duration `toml:"time_window"`
 }
 
 // SignaturesConfig controls Suricata rule loading.
@@ -99,7 +99,7 @@ type ExportConfig struct {
 	SIEMEndpoint string   `toml:"siem_endpoint"`
 	APIKey       string   `toml:"api_key"`
 	BatchSize    int      `toml:"batch_size"`
-	FlushInterval duration `toml:"flush_interval"`
+	FlushInterval Duration `toml:"flush_interval"`
 	MaxRetries   int      `toml:"max_retries"`
 }
 
@@ -112,7 +112,7 @@ type APIConfig struct {
 // PcapBufferConfig controls the PCAP evidence ring buffer.
 type PcapBufferConfig struct {
 	MaxSizeMB     int      `toml:"max_size_mb"`
-	Retention     duration `toml:"retention"`
+	Retention     Duration `toml:"retention"`
 	StoragePath   string   `toml:"storage_path"`
 	MaxFlowPackets int     `toml:"max_flow_packets"`
 }
@@ -178,18 +178,18 @@ func DefaultConfig() *Config {
 			BufferSize: 64,
 		},
 		Sessions: SessionsConfig{
-			TCPTimeout:      duration(5 * time.Minute),
-			UDPTimeout:      duration(2 * time.Minute),
+			TCPTimeout:      Duration(5 * time.Minute),
+			UDPTimeout:      Duration(2 * time.Minute),
 			MaxConcurrent:   100000,
-			CleanupInterval: duration(30 * time.Second),
+			CleanupInterval: Duration(30 * time.Second),
 		},
 		Detection: DetectionConfig{
-			Beacon:      BeaconConfig{MinSessions: 10, MaxJitterRatio: 0.2, MinDuration: duration(2 * time.Hour)},
+			Beacon:      BeaconConfig{MinSessions: 10, MaxJitterRatio: 0.2, MinDuration: Duration(2 * time.Hour)},
 			DNSTunnel:   DNSTunnelConfig{EntropyThreshold: 3.5, MaxSubdomainDepth: 5, QueryVolumeThreshold: 100},
-			LateralMove: LateralMoveConfig{FanOutThreshold: 5, TimeWindow: duration(15 * time.Minute)},
-			Exfil:       ExfilConfig{BaselineWindow: duration(1 * time.Hour), DeviationThreshold: 3.0, AbsoluteThresholdMB: 500},
-			Kerberos:    KerberosConfig{TGSRequestThreshold: 10, TimeWindow: duration(5 * time.Minute)},
-			Scan:        ScanConfig{PortThreshold: 50, HostThreshold: 25, TimeWindow: duration(5 * time.Minute)},
+			LateralMove: LateralMoveConfig{FanOutThreshold: 5, TimeWindow: Duration(15 * time.Minute)},
+			Exfil:       ExfilConfig{BaselineWindow: Duration(1 * time.Hour), DeviationThreshold: 3.0, AbsoluteThresholdMB: 500},
+			Kerberos:    KerberosConfig{TGSRequestThreshold: 10, TimeWindow: Duration(5 * time.Minute)},
+			Scan:        ScanConfig{PortThreshold: 50, HostThreshold: 25, TimeWindow: Duration(5 * time.Minute)},
 		},
 		Signatures: SignaturesConfig{
 			Enabled:  false,
@@ -197,7 +197,7 @@ func DefaultConfig() *Config {
 		},
 		Export: ExportConfig{
 			BatchSize:     500,
-			FlushInterval: duration(5 * time.Second),
+			FlushInterval: Duration(5 * time.Second),
 			MaxRetries:    3,
 		},
 		API: APIConfig{
@@ -206,7 +206,7 @@ func DefaultConfig() *Config {
 		},
 		PcapBuffer: PcapBufferConfig{
 			MaxSizeMB:      1024,
-			Retention:       duration(30 * time.Minute),
+			Retention:       Duration(30 * time.Minute),
 			StoragePath:    "/var/lib/akeso-ndr/pcap",
 			MaxFlowPackets: 50,
 		},
@@ -218,26 +218,26 @@ func DefaultConfig() *Config {
 }
 
 // ---------------------------------------------------------------------------
-// duration — TOML-friendly time.Duration wrapper
+// Duration — TOML-friendly time.Duration wrapper
 // ---------------------------------------------------------------------------
 
-// duration wraps time.Duration for TOML string unmarshaling (e.g. "5m", "2h").
-type duration time.Duration
+// Duration wraps time.Duration for TOML string unmarshaling (e.g. "5m", "2h").
+type Duration time.Duration
 
-func (d *duration) UnmarshalText(text []byte) error {
+func (d *Duration) UnmarshalText(text []byte) error {
 	parsed, err := time.ParseDuration(string(text))
 	if err != nil {
 		return err
 	}
-	*d = duration(parsed)
+	*d = Duration(parsed)
 	return nil
 }
 
-func (d duration) MarshalText() ([]byte, error) {
+func (d Duration) MarshalText() ([]byte, error) {
 	return []byte(time.Duration(d).String()), nil
 }
 
 // Duration returns the underlying time.Duration.
-func (d duration) Duration() time.Duration {
+func (d Duration) Duration() time.Duration {
 	return time.Duration(d)
 }
