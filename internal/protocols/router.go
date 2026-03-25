@@ -17,7 +17,11 @@ import (
 	ndrdns "github.com/akesondr/akeso-ndr/internal/protocols/dns"
 	ndrhttp "github.com/akesondr/akeso-ndr/internal/protocols/http"
 	ndrkrb "github.com/akesondr/akeso-ndr/internal/protocols/kerberos"
+	ndrntlm "github.com/akesondr/akeso-ndr/internal/protocols/ntlm"
+	ndrrdp "github.com/akesondr/akeso-ndr/internal/protocols/rdp"
 	ndrsmb "github.com/akesondr/akeso-ndr/internal/protocols/smb"
+	ndrsmtp "github.com/akesondr/akeso-ndr/internal/protocols/smtp"
+	ndrssh "github.com/akesondr/akeso-ndr/internal/protocols/ssh"
 	ndrtls "github.com/akesondr/akeso-ndr/internal/protocols/tls"
 )
 
@@ -32,6 +36,10 @@ type Router struct {
 	tls      *ndrtls.Parser
 	smb      *ndrsmb.Parser
 	kerberos *ndrkrb.Parser
+	ssh      *ndrssh.Parser
+	smtp     *ndrsmtp.Parser
+	rdp      *ndrrdp.Parser
+	ntlm     *ndrntlm.Parser
 	callback MetadataCallback
 
 	// Stats
@@ -45,6 +53,10 @@ type RouterStats struct {
 	TLS      uint64 `json:"tls"`
 	SMB      uint64 `json:"smb"`
 	Kerberos uint64 `json:"kerberos"`
+	SSH      uint64 `json:"ssh"`
+	SMTP     uint64 `json:"smtp"`
+	RDP      uint64 `json:"rdp"`
+	NTLM     uint64 `json:"ntlm"`
 	Unknown  uint64 `json:"unknown"`
 }
 
@@ -56,6 +68,10 @@ func NewRouter(callback MetadataCallback) *Router {
 		tls:      ndrtls.NewParser(),
 		smb:      ndrsmb.NewParser(),
 		kerberos: ndrkrb.NewParser(),
+		ssh:      ndrssh.NewParser(),
+		smtp:     ndrsmtp.NewParser(),
+		rdp:      ndrrdp.NewParser(),
+		ntlm:     ndrntlm.NewParser(),
 		callback: callback,
 	}
 }
@@ -105,6 +121,48 @@ func (r *Router) HandleStream(net, transport gopacket.Flow, client, server []byt
 			}
 			return
 		}
+
+	case "ssh":
+		meta := r.ssh.Parse(client, server)
+		if meta != nil {
+			r.incStat(&r.stats.SSH)
+			if r.callback != nil {
+				r.callback(meta, "ssh", net, transport)
+			}
+			return
+		}
+
+	case "smtp":
+		meta := r.smtp.Parse(client, server)
+		if meta != nil {
+			r.incStat(&r.stats.SMTP)
+			if r.callback != nil {
+				r.callback(meta, "smtp", net, transport)
+			}
+			return
+		}
+
+	case "rdp":
+		meta := r.rdp.Parse(client, server)
+		if meta != nil {
+			r.incStat(&r.stats.RDP)
+			if r.callback != nil {
+				r.callback(meta, "rdp", net, transport)
+			}
+			return
+		}
+	}
+
+	// Check for NTLM within any stream (it piggybacks on SMB, HTTP, etc.).
+	if r.ntlm.CanParse(client) || r.ntlm.CanParse(server) {
+		meta := r.ntlm.Parse(client, server)
+		if meta != nil {
+			r.incStat(&r.stats.NTLM)
+			if r.callback != nil {
+				r.callback(meta, "ntlm", net, transport)
+			}
+		}
+		// Don't return — let the primary protocol also be counted.
 	}
 
 	// Unknown/unhandled protocol.
@@ -202,6 +260,21 @@ func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
 		if r.kerberos.CanParse(client) {
 			return "kerberos"
 		}
+
+		// SSH: starts with "SSH-".
+		if r.ssh.CanParse(client) {
+			return "ssh"
+		}
+
+		// SMTP: starts with EHLO/HELO/MAIL.
+		if r.smtp.CanParse(client) {
+			return "smtp"
+		}
+
+		// RDP: TPKT + X.224 or mstshash cookie.
+		if r.rdp.CanParse(client) {
+			return "rdp"
+		}
 	}
 
 	// Also check server data for protocols where server responds first.
@@ -211,6 +284,9 @@ func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
 		}
 		if r.kerberos.CanParse(server) {
 			return "kerberos"
+		}
+		if r.ssh.CanParse(server) {
+			return "ssh"
 		}
 	}
 
@@ -224,6 +300,12 @@ func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
 		return "smb"
 	case 88:
 		return "kerberos"
+	case 22:
+		return "ssh"
+	case 25, 587, 465:
+		return "smtp"
+	case 3389:
+		return "rdp"
 	}
 
 	return "unknown"
