@@ -16,6 +16,9 @@ import (
 
 	ndrdns "github.com/akesondr/akeso-ndr/internal/protocols/dns"
 	ndrhttp "github.com/akesondr/akeso-ndr/internal/protocols/http"
+	ndrkrb "github.com/akesondr/akeso-ndr/internal/protocols/kerberos"
+	ndrsmb "github.com/akesondr/akeso-ndr/internal/protocols/smb"
+	ndrtls "github.com/akesondr/akeso-ndr/internal/protocols/tls"
 )
 
 // MetadataCallback is called when a protocol dissector produces metadata.
@@ -26,6 +29,9 @@ type Router struct {
 	mu       sync.RWMutex
 	dns      *ndrdns.Parser
 	http     *ndrhttp.Parser
+	tls      *ndrtls.Parser
+	smb      *ndrsmb.Parser
+	kerberos *ndrkrb.Parser
 	callback MetadataCallback
 
 	// Stats
@@ -34,10 +40,12 @@ type Router struct {
 
 // RouterStats tracks protocol classification counts.
 type RouterStats struct {
-	DNS     uint64 `json:"dns"`
-	HTTP    uint64 `json:"http"`
-	TLS     uint64 `json:"tls"`
-	Unknown uint64 `json:"unknown"`
+	DNS      uint64 `json:"dns"`
+	HTTP     uint64 `json:"http"`
+	TLS      uint64 `json:"tls"`
+	SMB      uint64 `json:"smb"`
+	Kerberos uint64 `json:"kerberos"`
+	Unknown  uint64 `json:"unknown"`
 }
 
 // NewRouter creates a protocol router with all available dissectors.
@@ -45,6 +53,9 @@ func NewRouter(callback MetadataCallback) *Router {
 	return &Router{
 		dns:      ndrdns.NewParser(),
 		http:     ndrhttp.NewParser(),
+		tls:      ndrtls.NewParser(),
+		smb:      ndrsmb.NewParser(),
+		kerberos: ndrkrb.NewParser(),
 		callback: callback,
 	}
 }
@@ -60,9 +71,7 @@ func (r *Router) HandleStream(net, transport gopacket.Flow, client, server []byt
 	case "http":
 		meta := r.http.Parse(client, server)
 		if meta != nil {
-			r.mu.Lock()
-			r.stats.HTTP++
-			r.mu.Unlock()
+			r.incStat(&r.stats.HTTP)
 			if r.callback != nil {
 				r.callback(meta, "http", net, transport)
 			}
@@ -70,20 +79,36 @@ func (r *Router) HandleStream(net, transport gopacket.Flow, client, server []byt
 		}
 
 	case "tls":
-		// TLS dissector will be added in a future phase.
-		r.mu.Lock()
-		r.stats.TLS++
-		r.mu.Unlock()
+		meta := r.tls.Parse(client, server)
+		r.incStat(&r.stats.TLS)
 		if r.callback != nil {
-			r.callback(nil, "tls", net, transport)
+			r.callback(meta, "tls", net, transport)
 		}
 		return
+
+	case "smb":
+		meta := r.smb.Parse(client, server)
+		if meta != nil {
+			r.incStat(&r.stats.SMB)
+			if r.callback != nil {
+				r.callback(meta, "smb", net, transport)
+			}
+			return
+		}
+
+	case "kerberos":
+		meta := r.kerberos.Parse(client, server)
+		if meta != nil {
+			r.incStat(&r.stats.Kerberos)
+			if r.callback != nil {
+				r.callback(meta, "kerberos", net, transport)
+			}
+			return
+		}
 	}
 
 	// Unknown/unhandled protocol.
-	r.mu.Lock()
-	r.stats.Unknown++
-	r.mu.Unlock()
+	r.incStat(&r.stats.Unknown)
 }
 
 // HandlePacket processes a single packet for non-TCP protocols (primarily DNS
@@ -93,9 +118,7 @@ func (r *Router) HandlePacket(pkt gopacket.Packet) {
 	if r.dns.CanParse(pkt) {
 		meta := r.dns.Parse(pkt)
 		if meta != nil {
-			r.mu.Lock()
-			r.stats.DNS++
-			r.mu.Unlock()
+			r.incStat(&r.stats.DNS)
 			if r.callback != nil {
 				var netFlow, transFlow gopacket.Flow
 				if nl := pkt.NetworkLayer(); nl != nil {
@@ -110,10 +133,32 @@ func (r *Router) HandlePacket(pkt gopacket.Packet) {
 		return
 	}
 
+	// Kerberos can also be over UDP (port 88).
+	if tl := pkt.TransportLayer(); tl != nil {
+		if udp, ok := tl.(*layers.UDP); ok {
+			if uint16(udp.SrcPort) == 88 || uint16(udp.DstPort) == 88 {
+				payload := udp.LayerPayload()
+				if r.kerberos.CanParse(payload) {
+					meta := r.kerberos.ParsePacketData(payload)
+					if meta != nil {
+						r.incStat(&r.stats.Kerberos)
+						if r.callback != nil {
+							var netFlow, transFlow gopacket.Flow
+							if nl := pkt.NetworkLayer(); nl != nil {
+								netFlow = nl.NetworkFlow()
+							}
+							transFlow = tl.TransportFlow()
+							r.callback(meta, "kerberos", netFlow, transFlow)
+						}
+					}
+					return
+				}
+			}
+		}
+	}
+
 	// Future: ICMP, other UDP protocols.
-	r.mu.Lock()
-	r.stats.Unknown++
-	r.mu.Unlock()
+	r.incStat(&r.stats.Unknown)
 }
 
 // Stats returns a snapshot of protocol classification counts.
@@ -121,6 +166,12 @@ func (r *Router) Stats() RouterStats {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.stats
+}
+
+func (r *Router) incStat(counter *uint64) {
+	r.mu.Lock()
+	*counter++
+	r.mu.Unlock()
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +192,26 @@ func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
 		if r.http.CanParse(client) {
 			return "http"
 		}
+
+		// SMB: look for SMB magic bytes.
+		if r.smb.CanParse(client) {
+			return "smb"
+		}
+
+		// Kerberos: ASN.1 APPLICATION tags for KDC messages.
+		if r.kerberos.CanParse(client) {
+			return "kerberos"
+		}
+	}
+
+	// Also check server data for protocols where server responds first.
+	if len(server) > 0 {
+		if r.smb.CanParse(server) {
+			return "smb"
+		}
+		if r.kerberos.CanParse(server) {
+			return "kerberos"
+		}
 	}
 
 	// 2. Port-based fallback.
@@ -149,6 +220,10 @@ func (r *Router) classifyTCP(dstPort uint16, client, server []byte) string {
 		return "http"
 	case 443, 8443:
 		return "tls"
+	case 445, 139:
+		return "smb"
+	case 88:
+		return "kerberos"
 	}
 
 	return "unknown"
@@ -160,16 +235,13 @@ func isTLSClientHello(data []byte) bool {
 	if len(data) < 6 {
 		return false
 	}
-	// TLS record: type(1) + version(2) + length(2) + handshake_type(1)
-	if data[0] != 0x16 { // Handshake
+	if data[0] != 0x16 {
 		return false
 	}
-	// Version: 0x0301 (TLS 1.0) through 0x0304 (TLS 1.3), or 0x0300 (SSL 3.0)
 	version := binary.BigEndian.Uint16(data[1:3])
 	if version < 0x0300 || version > 0x0304 {
 		return false
 	}
-	// Handshake type 1 = ClientHello
 	if data[5] == 0x01 {
 		return true
 	}
@@ -196,6 +268,9 @@ func classifyPacketProtocol(pkt gopacket.Packet) string {
 			dstPort := uint16(tp.DstPort)
 			if srcPort == 53 || dstPort == 53 {
 				return "dns"
+			}
+			if srcPort == 88 || dstPort == 88 {
+				return "kerberos"
 			}
 		}
 	}
