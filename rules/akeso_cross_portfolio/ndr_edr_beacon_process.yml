@@ -1,0 +1,34 @@
+title: NDR + EDR - C2 Beacon Correlated with Process
+id: a1b2c3d4-2222-4000-8000-000000000002
+status: experimental
+description: |
+  NDR detects C2 beaconing to an external IP from a host, correlated with
+  EDR process telemetry to identify the responsible process. Enables
+  responders to immediately identify and kill the beacon process.
+references:
+  - https://attack.mitre.org/techniques/T1071/
+  - https://attack.mitre.org/techniques/T1573/
+author: AkesoNDR
+date: 2026/03/25
+tags:
+  - attack.command_and_control
+  - attack.t1071
+  - attack.t1573
+logsource:
+  product: akeso_ndr
+  category: correlation
+detection:
+  beacon_detected:
+    source_type: akeso_ndr
+    event.dataset: 'ndr:detection'
+    ndr.detection.name: c2_beacon
+  process_network:
+    source_type: akeso_edr
+    event.category: network
+    destination.ip: '%beacon_detected.destination.ip%'
+    host.ip: '%beacon_detected.source.ip%'
+  timeframe: 5m
+  condition: beacon_detected | process_network
+level: high
+falsepositives:
+  - Legitimate software with regular polling intervals (update checkers)
