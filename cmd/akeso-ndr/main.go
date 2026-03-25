@@ -132,6 +132,16 @@ func main() {
 				log.Printf("[ntlm] %s → %s | domain=%s user=%s host=%s success=%v",
 					net.Src(), net.Dst(), nm.Domain, nm.Username, nm.Hostname, nm.Success)
 			}
+		case "ldap":
+			if lm, ok := meta.(*common.LDAPMeta); ok {
+				log.Printf("[ldap] %s → %s | base=%s query=%s scope=%s result=%d",
+					net.Src(), net.Dst(), lm.BaseObject, lm.Query, lm.QueryScope, lm.ResultCode)
+			}
+		case "dcerpc":
+			if dm, ok := meta.(*common.DCERPCMeta); ok {
+				log.Printf("[dcerpc] %s → %s | endpoint=%s op=%s",
+					net.Src(), net.Dst(), dm.Endpoint, dm.Operation)
+			}
 		}
 	})
 
@@ -190,9 +200,9 @@ func main() {
 	created, closed := tracker.Stats()
 	log.Printf("[sensor] Capture finished: packets=%d bytes=%d dropped=%d",
 		m.PacketsReceived, m.BytesReceived, m.PacketsDropped)
-	log.Printf("[sensor] Protocols: dns=%d http=%d tls=%d smb=%d krb=%d ssh=%d smtp=%d rdp=%d ntlm=%d unk=%d",
+	log.Printf("[sensor] Protocols: dns=%d http=%d tls=%d smb=%d krb=%d ssh=%d smtp=%d rdp=%d ntlm=%d ldap=%d dcerpc=%d unk=%d",
 		stats.DNS, stats.HTTP, stats.TLS, stats.SMB, stats.Kerberos,
-		stats.SSH, stats.SMTP, stats.RDP, stats.NTLM, stats.Unknown)
+		stats.SSH, stats.SMTP, stats.RDP, stats.NTLM, stats.LDAP, stats.DCERPC, stats.Unknown)
 	log.Printf("[sensor] Sessions: created=%d closed=%d active=%d",
 		created, closed, tracker.ActiveSessions())
 }
