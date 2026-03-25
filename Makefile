@@ -5,7 +5,7 @@ GOFLAGS     := -v
 VERSION     := 0.1.0
 LDFLAGS     := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: all build test run clean fmt vet lint
+.PHONY: all build test run clean fmt vet lint docker-build docker-up docker-down
 
 all: build
 
@@ -28,3 +28,12 @@ vet:
 	$(GO) vet ./...
 
 lint: vet fmt
+
+docker-build:
+	docker-compose build
+
+docker-up:
+	docker-compose up --build
+
+docker-down:
+	docker-compose down

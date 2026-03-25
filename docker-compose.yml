@@ -1,0 +1,53 @@
+# =============================================================================
+# AkesoNDR — Development / Test Environment
+#
+# Usage:
+#   docker-compose up --build          Build and start sensor + traffic gen
+#   docker-compose up -d               Detached mode
+#   docker-compose logs -f sensor      Follow sensor logs
+#   docker-compose down                Tear down
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # AkesoNDR Sensor — passive packet capture
+  # ---------------------------------------------------------------------------
+  sensor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: akeso-ndr-sensor
+    command: ["--interface", "eth0"]
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    networks:
+      - ndr-net
+    volumes:
+      - pcap-data:/var/lib/akeso-ndr/pcap
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Traffic Generator — replays test PCAPs into the shared network
+  # ---------------------------------------------------------------------------
+  traffic-gen:
+    image: debian:bookworm-slim
+    container_name: akeso-traffic-gen
+    depends_on:
+      - sensor
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    networks:
+      - ndr-net
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./tests/pcaps:/pcaps:ro
+    entrypoint: ["/bin/bash", "/scripts/generate-traffic.sh"]
+
+networks:
+  ndr-net:
+    driver: bridge
+
+volumes:
+  pcap-data:
