@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AkesoNDR — Network Detection & Response</title>
+    <style>
+        :root {
+            --bg: #0f1923;
+            --surface: #1a2633;
+            --border: #2a3a4a;
+            --text: #e0e8f0;
+            --text-dim: #8899aa;
+            --accent: #4fc3f7;
+            --critical: #ef5350;
+            --high: #ff9800;
+            --medium: #ffc107;
+            --low: #66bb6a;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        header h1 { font-size: 20px; font-weight: 600; }
+        header h1 span { color: var(--accent); }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--low);
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--low);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        nav {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 0;
+        }
+        nav button {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 13px;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        nav button:hover { color: var(--text); }
+        nav button.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        main { padding: 20px 24px; }
+        .page { display: none; }
+        .page.active { display: block; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .card h3 {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+        .card .value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+        .card .sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
+        /* Host threat matrix */
+        #threat-matrix {
+            width: 100%;
+            height: 400px;
+            position: relative;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        #threat-matrix canvas { width: 100%; height: 100%; }
+
+        /* Detection table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-dim);
+            font-weight: 500;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+        td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        tr:hover td { background: rgba(79, 195, 247, 0.05); }
+
+        .severity-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .sev-critical { background: var(--critical); color: white; }
+        .sev-high { background: var(--high); color: black; }
+        .sev-medium { background: var(--medium); color: black; }
+        .sev-low { background: var(--low); color: white; }
+
+        .mitre-tag {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            background: rgba(79, 195, 247, 0.15);
+            color: var(--accent);
+            margin-right: 4px;
+        }
+
+        /* Protocol chart */
+        .bar-chart { display: flex; flex-direction: column; gap: 8px; }
+        .bar-row { display: flex; align-items: center; gap: 12px; }
+        .bar-label { width: 80px; text-align: right; font-size: 13px; color: var(--text-dim); }
+        .bar-track { flex: 1; height: 24px; background: var(--border); border-radius: 4px; overflow: hidden; }
+        .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            background: var(--accent);
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            padding-left: 8px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .refresh-info { font-size: 11px; color: var(--text-dim); text-align: right; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1><span>Akeso</span>NDR</h1>
+        <div class="status-badge" id="status-badge">
+            <div class="status-dot"></div>
+            <span id="sensor-status">Connecting...</span>
+        </div>
+    </header>
+
+    <nav>
+        <button class="active" data-page="hosts">Host Threat Matrix</button>
+        <button data-page="detections">Detections</button>
+        <button data-page="protocols">Protocols</button>
+        <button data-page="health">Sensor Health</button>
+    </nav>
+
+    <main>
+        <!-- P9-T2: Host Threat Matrix -->
+        <div class="page active" id="page-hosts">
+            <div class="grid" id="host-summary-cards"></div>
+            <div class="card">
+                <h3>Threat vs Certainty Matrix</h3>
+                <div id="threat-matrix">
+                    <canvas id="matrix-canvas"></canvas>
+                </div>
+            </div>
+            <div class="card" style="margin-top: 16px;">
+                <h3>All Hosts</h3>
+                <table id="host-table">
+                    <thead>
+                        <tr><th>Host</th><th>Hostname</th><th>Threat</th><th>Certainty</th><th>Quadrant</th><th>Detections</th></tr>
+                    </thead>
+                    <tbody id="host-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- P9-T3: Detection Timeline -->
+        <div class="page" id="page-detections">
+            <div class="grid" id="detection-summary-cards"></div>
+            <div class="card">
+                <h3>Active Detections</h3>
+                <table>
+                    <thead>
+                        <tr><th>Time</th><th>Name</th><th>Type</th><th>Severity</th><th>Source</th><th>Destination</th><th>MITRE</th></tr>
+                    </thead>
+                    <tbody id="detection-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- P9-T4: Protocols -->
+        <div class="page" id="page-protocols">
+            <div class="card">
+                <h3>Protocol Distribution (Sessions)</h3>
+                <div class="bar-chart" id="protocol-chart"></div>
+            </div>
+        </div>
+
+        <!-- P9-T4: Sensor Health -->
+        <div class="page" id="page-health">
+            <div class="grid" id="health-cards"></div>
+        </div>
+    </main>
+
+    <div class="refresh-info">Auto-refresh every 10s</div>
+
+    <script>
+    const API = '/api/v1';
+
+    // --- Navigation ---
+    document.querySelectorAll('nav button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('page-' + btn.dataset.page).classList.add('active');
+        });
+    });
+
+    // --- Data fetching ---
+    async function fetchJSON(path) {
+        try {
+            const r = await fetch(API + path);
+            if (!r.ok) throw new Error(r.status);
+            return await r.json();
+        } catch (e) {
+            console.error('Fetch error:', path, e);
+            return null;
+        }
+    }
+
+    // --- Severity helpers ---
+    function sevClass(s) {
+        if (s >= 8) return 'sev-critical';
+        if (s >= 6) return 'sev-high';
+        if (s >= 4) return 'sev-medium';
+        return 'sev-low';
+    }
+    function sevLabel(s) {
+        if (s >= 8) return 'Critical';
+        if (s >= 6) return 'High';
+        if (s >= 4) return 'Medium';
+        return 'Low';
+    }
+    function quadColor(q) {
+        const m = { critical: '#ef5350', high: '#ff9800', medium: '#ffc107', low: '#66bb6a' };
+        return m[q] || '#8899aa';
+    }
+
+    // --- P9-T2: Host Threat Matrix ---
+    async function loadHosts() {
+        const data = await fetchJSON('/hosts');
+        if (!data) return;
+        const hosts = data.hosts || [];
+
+        // Summary cards
+        const critical = hosts.filter(h => h.quadrant === 'critical').length;
+        const high = hosts.filter(h => h.quadrant === 'high').length;
+        document.getElementById('host-summary-cards').innerHTML = `
+            <div class="card"><h3>Total Hosts</h3><div class="value">${hosts.length}</div></div>
+            <div class="card"><h3>Critical</h3><div class="value" style="color:var(--critical)">${critical}</div></div>
+            <div class="card"><h3>High</h3><div class="value" style="color:var(--high)">${high}</div></div>
+        `;
+
+        // Table
+        document.getElementById('host-table-body').innerHTML = hosts.map(h => `
+            <tr>
+                <td>${h.ip}</td>
+                <td>${h.hostname || '-'}</td>
+                <td>${h.threat_score}</td>
+                <td>${h.certainty_score}</td>
+                <td><span class="severity-badge ${sevClass(h.threat_score/10)}">${h.quadrant}</span></td>
+                <td>${h.active_detections || 0}</td>
+            </tr>
+        `).join('');
+
+        // Canvas scatter plot
+        drawMatrix(hosts);
+    }
+
+    function drawMatrix(hosts) {
+        const canvas = document.getElementById('matrix-canvas');
+        const rect = canvas.parentElement.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width, h = canvas.height;
+        const pad = 40;
+
+        ctx.fillStyle = '#0f1923';
+        ctx.fillRect(0, 0, w, h);
+
+        // Quadrant backgrounds
+        const midX = pad + (w - 2*pad) * 0.5;
+        const midY = pad + (h - 2*pad) * 0.5;
+        ctx.globalAlpha = 0.08;
+        ctx.fillStyle = '#66bb6a'; ctx.fillRect(pad, midY, midX-pad, h-pad-midY);
+        ctx.fillStyle = '#ffc107'; ctx.fillRect(midX, midY, w-pad-midX, h-pad-midY);
+        ctx.fillStyle = '#ff9800'; ctx.fillRect(pad, pad, midX-pad, midY-pad);
+        ctx.fillStyle = '#ef5350'; ctx.fillRect(midX, pad, w-pad-midX, midY-pad);
+        ctx.globalAlpha = 1;
+
+        // Axes
+        ctx.strokeStyle = '#2a3a4a';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, h-pad); ctx.lineTo(w-pad, h-pad); ctx.stroke();
+
+        // Labels
+        ctx.fillStyle = '#8899aa';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Threat Score →', w/2, h-8);
+        ctx.save();
+        ctx.translate(12, h/2);
+        ctx.rotate(-Math.PI/2);
+        ctx.fillText('Certainty Score →', 0, 0);
+        ctx.restore();
+
+        // Plot hosts
+        hosts.forEach(host => {
+            const x = pad + (host.threat_score / 100) * (w - 2*pad);
+            const y = h - pad - (host.certainty_score / 100) * (h - 2*pad);
+
+            ctx.beginPath();
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = quadColor(host.quadrant);
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.fillStyle = '#e0e8f0';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(host.ip, x + 10, y + 4);
+        });
+    }
+
+    // --- P9-T3: Detection Timeline ---
+    async function loadDetections() {
+        const data = await fetchJSON('/detections');
+        if (!data) return;
+        const dets = data.detections || [];
+
+        const critical = dets.filter(d => d.severity >= 8).length;
+        document.getElementById('detection-summary-cards').innerHTML = `
+            <div class="card"><h3>Total Detections</h3><div class="value">${dets.length}</div></div>
+            <div class="card"><h3>Critical/High</h3><div class="value" style="color:var(--critical)">${critical}</div></div>
+        `;
+
+        document.getElementById('detection-table-body').innerHTML = dets.map(d => `
+            <tr>
+                <td>${new Date(d.timestamp).toLocaleTimeString()}</td>
+                <td>${d.name}</td>
+                <td>${d.type}</td>
+                <td><span class="severity-badge ${sevClass(d.severity)}">${sevLabel(d.severity)}</span></td>
+                <td>${d.src_ip || '-'}</td>
+                <td>${d.dst_ip || '-'}</td>
+                <td><span class="mitre-tag">${d.mitre?.technique_id || '-'}</span><span class="mitre-tag">${d.mitre?.tactic_name || '-'}</span></td>
+            </tr>
+        `).join('');
+    }
+
+    // --- P9-T4: Protocols ---
+    async function loadProtocols() {
+        const data = await fetchJSON('/protocols');
+        if (!data) return;
+
+        const protocols = [
+            ['DNS', data.dns], ['HTTP', data.http], ['TLS', data.tls],
+            ['SMB', data.smb], ['Kerberos', data.kerberos], ['SSH', data.ssh],
+            ['SMTP', data.smtp], ['RDP', data.rdp], ['NTLM', data.ntlm],
+            ['LDAP', data.ldap], ['DCE-RPC', data.dcerpc]
+        ].filter(([,v]) => v && v.sessions > 0)
+         .sort((a, b) => b[1].sessions - a[1].sessions);
+
+        const max = protocols.length > 0 ? protocols[0][1].sessions : 1;
+
+        document.getElementById('protocol-chart').innerHTML = protocols.map(([name, p]) => `
+            <div class="bar-row">
+                <div class="bar-label">${name}</div>
+                <div class="bar-track">
+                    <div class="bar-fill" style="width:${(p.sessions/max*100).toFixed(1)}%">${p.sessions.toLocaleString()}</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // --- P9-T4: Sensor Health ---
+    async function loadHealth() {
+        const data = await fetchJSON('/health');
+        if (!data) return;
+
+        document.getElementById('sensor-status').textContent = data.status || 'unknown';
+        document.getElementById('health-cards').innerHTML = `
+            <div class="card"><h3>Status</h3><div class="value" style="color:var(--low)">${data.status}</div></div>
+            <div class="card"><h3>Uptime</h3><div class="value">${data.uptime}</div></div>
+            <div class="card"><h3>Packets Captured</h3><div class="value">${(data.packets_captured||0).toLocaleString()}</div></div>
+            <div class="card"><h3>Packets Dropped</h3><div class="value" style="color:${data.packets_dropped>0?'var(--critical)':'var(--low)'}">${(data.packets_dropped||0).toLocaleString()}</div></div>
+            <div class="card"><h3>Bytes Captured</h3><div class="value">${formatBytes(data.bytes_captured||0)}</div></div>
+            <div class="card"><h3>Packets/sec</h3><div class="value">${(data.pps||0).toFixed(0)}</div></div>
+            <div class="card"><h3>Bytes/sec</h3><div class="value">${formatBytes(data.bps||0)}/s</div></div>
+            <div class="card"><h3>Active Sessions</h3><div class="value">${(data.active_sessions||0).toLocaleString()}</div></div>
+            <div class="card"><h3>Detection Engine</h3><div class="value" style="color:var(--low)">${data.detection_engine}</div></div>
+        `;
+    }
+
+    function formatBytes(b) {
+        if (b >= 1e9) return (b/1e9).toFixed(1) + ' GB';
+        if (b >= 1e6) return (b/1e6).toFixed(1) + ' MB';
+        if (b >= 1e3) return (b/1e3).toFixed(1) + ' KB';
+        return b + ' B';
+    }
+
+    // --- Refresh loop ---
+    async function refresh() {
+        await Promise.all([loadHosts(), loadDetections(), loadProtocols(), loadHealth()]);
+    }
+    refresh();
+    setInterval(refresh, 10000);
+    </script>
+</body>
+</html>
