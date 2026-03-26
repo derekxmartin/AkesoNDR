@@ -8,6 +8,8 @@ require (
 )
 
 require (
+	github.com/go-chi/chi/v5 v5.2.5 // indirect
+	github.com/go-chi/cors v1.2.2 // indirect
 	golang.org/x/net v0.0.0-20190620200207-3b0461eec859 // indirect
 	golang.org/x/sys v0.0.0-20190412213103-97732733099d // indirect
 )
